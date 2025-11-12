@@ -1,7 +1,6 @@
 ---
 title: "P8105_HW5_rs4788"
 output: github_document
-Author: Ruhui Shen
 ---
 
 
@@ -9,6 +8,7 @@ Author: Ruhui Shen
 library(tidyverse)
 library(readxl)
 library(rvest)
+library(scales)
 
 
 knitr::opts_chunk$set(
@@ -29,4 +29,52 @@ options(
 scale_colour_discrete = scale_colour_viridis_d
 scale_fill_discrete = scale_fill_viridis_d
 ```
+
+# Problem 1
+
+### First, creat a function
+
+```{r}
+duplicate_birth = 
+  function(n, days = 365) {
+  if (!is.numeric(n) || length(n) != 1 || n <= 0 || n != as.integer(n)) {
+    stop
+  }
+  if (!is.numeric(days) || length(days) != 1 || days <= 1 || days != as.integer(days)) {
+    stop
+  }
+  
+  bdays = sample.int(days, size = n, replace = TRUE)
+  any(duplicated(bdays))
+}
+```
+
+
+### Then, make a plot
+
+```{r}
+set.seed(8105)
+ns = 2:50
+B  = 10000
+
+prob =
+  tibble(n = ns) %>%
+  mutate(p_shared = purrr::map_dbl(n, ~ mean(replicate(B, duplicate_birth(.x)))))
+
+prob
+
+ggplot(prob, aes(x = n, y = p_shared)) +
+  geom_line(linewidth = 0.5, color = "#0072B2") +
+  geom_point(size = 1.2, color = "#0072B2", alpha = 0.85) +
+  geom_hline(yintercept = 0.5, linetype = "dashed") +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  labs(
+    title = "Probability of at least two people share birthday",
+    x = "Group size (n)",
+    y = "Probability"
+  ) +
+  theme_minimal()
+```
+
+The probability that at least two people in the group share a birthday by averaging across the 10000 simulation increases rapidly with the group size n. When n is approximately 23, the probability reaches 50%, and when n is 50, the probability has already reached approximately 95%.
 
