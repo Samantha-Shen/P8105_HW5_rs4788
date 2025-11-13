@@ -9,6 +9,7 @@ library(tidyverse)
 library(readxl)
 library(rvest)
 library(scales)
+library(broom)
 
 
 knitr::opts_chunk$set(
@@ -32,7 +33,7 @@ scale_fill_discrete = scale_fill_viridis_d
 
 # Problem 1
 
-### First, creat a function
+### First, creat a function:
 
 ```{r}
 duplicate_birth = 
@@ -50,7 +51,7 @@ duplicate_birth =
 ```
 
 
-### Then, make a plot
+### Then, make a plot:
 
 ```{r}
 set.seed(8105)
@@ -78,3 +79,107 @@ ggplot(prob, aes(x = n, y = p_shared)) +
 
 The probability that at least two people in the group share a birthday by averaging across the 10000 simulation increases rapidly with the group size n. When n is approximately 23, the probability reaches 50%, and when n is 50, the probability has already reached approximately 95%.
 
+
+# Problem 2
+
+## Let's do a t-test:
+```{r}
+set.seed(8105)
+n = 30
+sigma = 5
+B = 5000
+
+ttest = function(mu) {
+  x = rnorm(n, mean = mu, sd = sigma)
+  t.test(x, mu = 0) %>% 
+    tidy() %>%
+    transmute(mean_value = estimate, p_value = p.value)
+}
+
+ttest_u0 =
+  tibble(run = 1:B) %>%
+  mutate(out = purrr::map(run, ~ ttest(mu = 0))) %>%
+  unnest(out)
+
+type1_error = mean(ttest_u0$p_value < 0.05)
+```
+
+## Reapeated and make plots:
+```{r}
+mu_grid = 1:6
+
+power_result =
+  tibble(mu = rep(mu_grid, each = B)) %>%
+  mutate(out = purrr::map(mu, ttest)) %>%
+  unnest(out)
+
+power_df =
+  power_result %>%
+  group_by(mu) %>%
+  summarise(power = mean(p_value < 0.05), .groups = "drop")
+power_df
+```
+
+```{r}
+power_df %>%
+  ggplot(aes(x = mu, y = power)) +
+  geom_line(linewidth = 0.6) +
+  geom_point(size = 1.6) +
+  scale_x_continuous(breaks = 1:6) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(
+    title = "Power of one-sample t-test (α = 0.05)",
+    x = expression(mu), y = "Power"
+  ) +
+  theme_classic() 
+```
+
+The greater the μ value, which means the greater the effect size, the higher the power, which increases monotonically and approaches 1.
+In this simulation, when μ=1, the power is small, approximately 0.2; when μ increases to 4, the power increases to approach 1.
+
+
+
+```{r}
+all_result =
+  bind_rows(
+    ttest_u0 %>% mutate(mu = 0),
+    power_result
+  )
+
+
+avg_all =
+  all_result %>%
+  group_by(mu) %>%
+  summarise(mean_all = mean(mean_value), .groups = "drop")
+
+
+avg_reject =
+  all_result %>%
+  filter(p_value < 0.05) %>%
+  group_by(mu) %>%
+  summarise(mean_reject = mean(mean_value), .groups = "drop")
+
+
+plot_df = left_join(avg_all, avg_reject, by = "mu")
+```
+
+```{r}
+plot_df %>%
+  ggplot(aes(x = mu)) +
+  geom_line(aes(y = mean_all), linewidth = 0.6, color = "#0072B2") +
+  geom_point(aes(y = mean_all), size = 1.6, color = "#0072B2") +
+  geom_line(aes(y = mean_reject), linewidth = 0.6, linetype = "dashed", color = "firebrick") +
+  geom_point(aes(y = mean_reject), size = 1.6, color = "firebrick") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted") +
+  scale_x_continuous(breaks = 0:6) +
+  labs(
+    title = "Average estimate of μ vs true μ",
+    subtitle = "Solid: all samples; Dashed: only rejections (p < 0.05); n = 30, σ = 5",
+    x = expression(true~mu), y = expression(average~hat(mu))
+  ) +
+  theme_classic(base_size = 12)
+```
+
+The sample mean $\hat{\mu}$ across tests for which the null is rejected does not exactly equal the true value of μ. Initially, $\hat{\mu}$ is greater than the true μ, and only when μ reaches 4, the two values become close.
+
+This is because the sample mean $\hat{\mu}$ is unbiased for μ under unconditional conditions. However, “considering only samples that reject the null hypothesis” constitutes conditional selection, which induces selection bias away from 0. Only when the true mean μ increases, the power approaches 1, the conditional average $\hat{\mu}$ converges back to μ.
