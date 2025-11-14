@@ -10,6 +10,9 @@ library(readxl)
 library(rvest)
 library(scales)
 library(broom)
+library(dplyr)
+library(purrr)
+library(ggplot2)
 
 
 knitr::opts_chunk$set(
@@ -31,7 +34,7 @@ scale_colour_discrete = scale_colour_viridis_d
 scale_fill_discrete = scale_fill_viridis_d
 ```
 
-# Problem 1
+## Problem 1
 
 ### First, creat a function:
 
@@ -80,9 +83,9 @@ ggplot(prob, aes(x = n, y = p_shared)) +
 The probability that at least two people in the group share a birthday by averaging across the 10000 simulation increases rapidly with the group size n. When n is approximately 23, the probability reaches 50%, and when n is 50, the probability has already reached approximately 95%.
 
 
-# Problem 2
+## Problem 2
 
-## Let's do a t-test:
+### Let's do a t-test:
 ```{r}
 set.seed(8105)
 n = 30
@@ -104,7 +107,7 @@ ttest_u0 =
 type1_error = mean(ttest_u0$p_value < 0.05)
 ```
 
-## Reapeated and make plots:
+### Reapeated and make plots:
 ```{r}
 mu_grid = 1:6
 
@@ -183,3 +186,100 @@ plot_df %>%
 The sample mean $\hat{\mu}$ across tests for which the null is rejected does not exactly equal the true value of μ. Initially, $\hat{\mu}$ is greater than the true μ, and only when μ reaches 4, the two values become close.
 
 This is because the sample mean $\hat{\mu}$ is unbiased for μ under unconditional conditions. However, “considering only samples that reject the null hypothesis” constitutes conditional selection, which induces selection bias away from 0. Only when the true mean μ increases, the power approaches 1, the conditional average $\hat{\mu}$ converges back to μ.
+
+
+## Problem 3
+### Describe the raw data
+
+```{r}
+homicide =
+  read_csv("./data/homicide-data.csv") %>%
+  janitor::clean_names()
+
+city_sum =
+  homicide %>%
+  mutate(state = if_else(city == "Tulsa" & state == "AL", "OK", state)) %>%
+  mutate(city_state = paste(city, state, sep = ", ")) %>%
+  group_by(city_state) %>%
+  summarise(
+    n_homicides = n(),
+    n_unsolved  = sum(disposition %in% c("Closed without arrest", "Open/No arrest")),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(n_unsolved))
+
+city_sum
+```
+This dataset contains homicide case data from 50 major U.S. cities, including city and state, date, latitude/longitude, victim characteristics, and case disposition. I merged the data to create a city_state variable and aggregated it by city to derive two indicators: the total number of homicides in each city and the number of unsolved cases.
+
+
+### Take a look at Baltimore
+
+```{r}
+balt_counts =
+  city_sum %>%
+  filter(city_state == "Baltimore, MD") %>%
+  select(n_unsolved, n_homicides)
+
+balt_pt =
+  prop.test(x = balt_counts$n_unsolved, n = balt_counts$n_homicides)
+
+balt_result =
+  balt_pt %>%
+  tidy() %>%
+  select(estimate, conf.low, conf.high)
+
+balt_result
+```
+
+
+### All city statistic
+
+```{r}
+city_result =
+  city_sum %>%
+  mutate(
+    test = map2(n_unsolved, n_homicides, ~ prop.test(.x, .y)),
+    tidy = map(test, tidy)
+  ) %>%
+  select(city_state, n_homicides, n_unsolved, tidy) %>%
+  unnest(tidy) %>%
+  transmute(
+    city_state,
+    n_homicides,
+    n_unsolved,
+    prop_unsolved = estimate,
+    conf_low     = conf.low,
+    conf_high    = conf.high
+  ) %>%
+  arrange(desc(prop_unsolved))
+
+city_result
+```
+
+
+### Make a plot
+
+```{r, fig.width=10, fig.height=26}
+city_result %>%
+  mutate(city_state = forcats::fct_reorder(city_state, prop_unsolved)) %>%
+  ggplot(aes(x = prop_unsolved, y = city_state, colour = prop_unsolved)) +
+  geom_errorbarh(aes(xmin = conf_low, xmax = conf_high),
+                 height = 0.15, size = 0.4, alpha = 0.9) +
+  geom_point(size = 1.8) +
+  scale_x_continuous(
+    labels = scales::percent_format(accuracy = 1),
+    limits = c(0, 1),
+    expand = expansion(mult = c(0, .02))
+  ) +
+  scale_colour_viridis_c(direction = -1, guide = guide_colorbar(title = "Unsolved")) +
+  labs(
+    title = "Unsolved homicides by city",
+    x = "Proportion unsolved (95% CI)", y = NULL
+  ) +
+  theme(
+    axis.text.y = element_text(size = 6),
+    axis.line.x = element_line(color = "black", linewidth = 0.3))
+```
+
+The unsolved homicides rates across 50 cities range from approximately 25% to 75%, with most cities falling between 40% and 60%. Chicago has the highest unsolved rate at around 74%, while Richmond has the lowest at approximately 26%.
